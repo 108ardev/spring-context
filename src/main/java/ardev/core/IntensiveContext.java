@@ -7,6 +7,7 @@ import ardev.service.InjectionServiceImpl;
 import ardev.service.SearchService;
 import ardev.service.SearchServiceImpl;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -19,7 +20,7 @@ public class IntensiveContext {
     private final SearchService searchService;
     private final InjectionService injectionService;
     private final DependencyFactory dependencyFactory;
-    private final Map<Class<?>, Class<?>> componentClasses = new HashMap<>();
+    private final Map<Class<?>, List<Class<?>>> componentClasses = new HashMap<>();
     private final String basePackage;
 
     /**
@@ -45,7 +46,17 @@ public class IntensiveContext {
         List<Class<?>> classes = searchService.findClasses(basePackage);
         for (Class<?> clazz : classes) {
             if (clazz.isAnnotationPresent(IntensiveComponent.class)) {
-                componentClasses.put(clazz, clazz);
+                // Регистрация всех интерфейсов, которые реализует класс
+                Class<?>[] interfaces = clazz.getInterfaces();
+                if (interfaces.length == 0) {
+                    // Если класс не реализует интерфейс, регистрируем сам класс
+                    componentClasses.computeIfAbsent(clazz, _ -> new ArrayList<>()).add(clazz);
+                } else {
+                    // Регистрация всех реализованных интерфейсов
+                    for (Class<?> iface : interfaces) {
+                        componentClasses.computeIfAbsent(iface, _ -> new ArrayList<>()).add(clazz);
+                    }
+                }
             }
         }
     }
@@ -59,11 +70,16 @@ public class IntensiveContext {
      * @throws Exception если тип не найден или не может быть создан
      */
     public <T> T getObject(Class<T> type) throws Exception {
-        if (!componentClasses.containsKey(type)) {
+        List<Class<?>> implementations = componentClasses.get(type);
+
+        if (implementations == null) {
             throw new RuntimeException("No component found for: " + type);
         }
+        if (implementations.size() > 1) {
+            throw new IllegalStateException("Multiple implementations found for interface: " + type.getCanonicalName());
+        }
 
-        Class<?> implClass = componentClasses.get(type);
+        Class<?> implClass = implementations.getFirst();
         Object instance = dependencyFactory.createInstance(implClass);
         if (!type.isInstance(instance)) {
             throw new IllegalArgumentException("The component does not match the requested type: " + type);
